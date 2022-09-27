@@ -2,6 +2,9 @@ import os
 import csv
 import discord
 from dotenv import load_dotenv
+from collections import namedtuple
+
+Match = namedtuple("Match","p1 p2 bo3 done")
 from user import User
 
 
@@ -21,6 +24,8 @@ client = discord.Client(intents=intents)
 #programming gods forgive me
 
 CURRENT_MATCHES = set()
+NEEDS_CONFIRMATION = set()
+
 def update_users():
     global USERS
     USERS = set()
@@ -31,6 +36,12 @@ def update_users():
     for i in range(1,11):
         USERS.add(User(f"Dummy{i}",f"LMAO#696{i}",100*i))
 
+def user_exists(disc:str):
+    return len([user for user in USERS if user.disc == disc]) == 1
+def name_exists(name:str):
+    return len([user for user in USERS if user.name == name]) == 1
+def user_by_disc(disc:str) -> User:
+    return [user for user in USERS if user.disc == disc][0]
 
 @client.event
 async def on_ready():
@@ -52,7 +63,7 @@ async def on_message(message):
         msg = message.content[1:]
         if msg.startswith("help"):
             await message.channel.send('Type```!reg [name]``` to get started or ```!match [@ your opponent] [bo3/bo5]```\
-            to start a match and ```!winner [@ winner] to report results``` or ```!myrank``` for your ranking, or ```!top10``` to see the current top 10')
+            to start a match and ```!report [@ winner] to report results``` or ```!myrank``` for your ranking, or ```!top10``` to see the current top 10')
 
         elif msg.startswith("reg"):
             user_info = msg.split(" ")[1:]
@@ -60,8 +71,7 @@ async def on_message(message):
                 await message.channel.send("Command not recognized. Type !help if you need it")
                 return
 
-            already_in = [user for user in USERS if (user.name == user_info[0] or user.disc == str(message.author))]
-            if len(already_in) >=1:
+            if user_exists(str(message.author)) or name_exists(user_info):
                 await message.channel.send("Already registered! Your name must be unique")
                 return
             USERS.add(User(user_info[0],str(message.author),1000))
@@ -73,14 +83,72 @@ async def on_message(message):
             await message.channel.send(f"Registered {user_info[0]}")
 
         elif msg.startswith("match"):
-            print(msg.split(" "))
             opp = msg.split(" ")[1]
-            print(await client.fetch_user(int(opp[2:-1])))
-            if msg.split(" ")[2].lower() not in ("bo3","bo5"):
-                await message.channel.send("Please specify whether the match is a bo3 or bo5")
+            opp = (await client.fetch_user(int(opp[2:-1])))
+            you = str(message.author)
+            if not user_exists(opp):
+                await message.channel.send("Opponent is not registered")
+                return
 
-        elif msg.startswith("winner"):
-            await message.channel.send("That's not yet implemented because I'm lazy!")
+            elif not user_exists(you):
+                await message.channel.send("You must be registered to match")
+                return
+
+            elif msg.split(" ")[2].lower() not in ("bo3","bo5"):
+                await message.channel.send("Please specify whether the match is a bo3 or bo5")
+                return
+            else:
+                bo3 = msg.split(" ")[2].lower() == "bo3"
+                CURRENT_MATCHES.add(Match(you,opp,bo3,False))
+                await message.channel.send(f"{you} vs {opp}, {'best of 3' if bo3 else 'best of 5'}\
+                \nReport match results with ```!report [winner]```")
+            
+
+        elif msg.startswith("report"):
+            if len(CURRENT_MATCHES) == 0:
+                await message.channel.send("No matches ongoing!")
+                return
+            try:
+                this_match = [match for match in CURRENT_MATCHES if (str(message.author) in (match.p1,match.p2))][0]
+            except:
+                await message.channel.send("You are not currently in any matches")
+                return
+            winner = msg.split(" ")[1]
+            winner = (await client.fetch_user(int(winner[2:-1])))
+            if str(message.author) == this_match.p1:
+                other = this_match.p2
+            else:
+                other = this_match.p1
+            NEEDS_CONFIRMATION.add(other,winner==other,this_match.bo3)
+            await message.channel.send(f"Winner: {winner}\n{other}, please type !confirm to verify the\
+            match results or !dispute to dispute the loss")
+
+        elif msg.startswith("confirm"):
+            matches = [match for match in NEEDS_CONFIRMATION if str(message.author) == match[0]]
+            
+            if len(matches)!=1:
+                await message.channel.say("No matches to confirm")
+                return
+            confirmation_info = matches[0]
+            this_match = [match for match in CURRENT_MATCHES if (str(message.author) in\
+            (match.p1,match.p2))][0]
+
+            if str(message.author) == this_match.p1:
+                other = this_match.p2
+            else:
+                other = this_match.p1
+
+            NEEDS_CONFIRMATION.remove(this_match)
+            user_by_disc(message.author).match(user_by_disc(other),
+            confirmation_info[1],confirmation_info[2])
+            await message.channel.say("Results confirmed")
+
+        elif msg.startswith("dispute"):
+            matches = [match for match in NEEDS_CONFIRMATION if str(message.author) == match[0]]
+            if len(matches)!=1:
+                await message.channel.say("No matches to dispute")
+                return
+
 
         elif msg.startswith("myrank"):
             top_rank = sorted(USERS,key=lambda x:x.elo,reverse=True)
@@ -89,7 +157,6 @@ async def on_message(message):
         elif msg.startswith("top10"):
             top_rank = sorted(USERS,key=lambda x:x.elo,reverse=True)
             await message.channel.send("".join([f"{i+1}. {user}\n" for i,user in enumerate(top_rank[:10])]))
-
         
         elif msg.startswith("reset"):
             update_users()
