@@ -7,7 +7,7 @@ class User:
         self.BO5_K = 32
 
     def __str__(self):
-        return f"{self.name}: ranking {self.elo}"
+        return f"{self.name} | {round(self.elo,2)}"
 
     def match(self,other,won:bool,bo3:bool):
         self_expected = 1/(1+10**((other.elo-self.elo)/400))
@@ -19,8 +19,3 @@ class User:
             self.elo = self.elo + self.BO5_K*(int(won)-self_expected)
             other.elo = other.elo + self.BO5_K*(int(not won)-other_expected)
 
-fugu = User("fugu","@fugu",1200)
-darsh = User ("darsh","@darsh",400)
-print(darsh,fugu,sep="\n")
-darsh.match(fugu,True,False)
-print(darsh,fugu,sep="\n")
